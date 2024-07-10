@@ -1,54 +1,98 @@
-from transformers import pipeline
-
 import asyncio
 import logging
-import sys
-from os import getenv
-
-from aiogram import Bot, Dispatcher, html
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
-from aiogram.filters import CommandStart
-from aiogram.types import Message
-
+import json
 import requests
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from ig_parse import get_instagram_posts
+from random import randint
 
-API_URL = "https://api-inference.huggingface.co/models/r1char9/rubert-base-cased-russian-sentiment"
-headers = {"Authorization": "Bearer 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"}
+from groq import Groq
+
+API_URL = "https://api.aimlapi.com/chat/completions"
+headers = {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer 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'
+}
+
+client = Groq(
+    api_key='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')
 
 
 def query(payload):
-    response = requests.post(API_URL, headers=headers,
-                             json={"inputs": payload})
-    return response.json()
+    payload = json.dumps({
+        "model": "meta-llama/Llama-2-70b-chat-hf",
+        "messages": [
+            {
+                "role": "user",
+                "content": f"Проанализируй настроение сообщения: '{payload}'"
+            }
+        ],
+        "max_tokens": 512,
+        "stream": False
+    })
+
+    # response = requests.post(API_URL, headers=headers,
+    #                          data=payload.encode("utf-8"))
+
+    # if (response.ok == False):
+    #     logging.error(f"Error: {response.text}")
+    #     return "Error"
+
+    # return response.json()["choices"][0]["message"]["content"]
+
+    chat_completionm = client.chat.completions.create(
+        messages=[
+            {
+                "role": "user",
+                "content": f"Проанализируй настроение сообщения, в нем представлено описание поста, а также комментарии к нему, отдельно сделай анализ по комментариям: '{payload}'"
+            }
+        ],
+        model="llama3-8b-8192",
+        max_tokens=512,
+        stream=False
+    )
+
+    return chat_completionm.choices[0].message.content
 
 
-bot = Bot(token='7225389278:AAFw99zlen1nnW7AkEIB8Ypg_7wG1GwXkog',
-          default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
+def send_email(subject, body, to_email):
+    from_email = "macinchicken@alwaysdata.net"
+    from_password = "TopFood2024"
 
-dp = Dispatcher()
+    # Set up the server
+    server = smtplib.SMTP(host='smtp-macinchicken.alwaysdata.net')
+    server.starttls()
+    server.login(from_email, from_password)
 
-logging.basicConfig(level=logging.INFO)
+    # Create the email
+    msg = MIMEMultipart()
+    msg['From'] = from_email
+    msg['To'] = to_email
+    msg['Subject'] = subject
+
+    # Attach the message
+    msg.attach(MIMEText(body, 'plain'))
+
+    # Send the email
+    server.send_message(msg)
+    server.quit()
 
 
-@dp.message(CommandStart())
-async def start(message: Message):
-    await message.answer("Привет! Отправь мне текст, и я определю его тональность!")
+async def fetch_and_process_instagram_posts():
+    session_file = "your_instagram_session"
+    username = "stardust_rq"
 
+    report = ""
 
-@dp.message()
-async def classify_text(message: Message):
-    text = message.text
-    await bot.send_chat_action(message.chat.id, 'typing')
-    sentiment = query(text)[0][0]["label"]
-    await message.answer(f"Тональность текста: {sentiment}")
+    posts = get_instagram_posts('jas.almaty', session_file)
+    for post in posts:
+        mood = query(f"Описание поста: {post['caption']}, Комментарии к посту: {post['comments']}")
+        print(post['comments'])
+        report += f'Post shortcode: {post['url']}\n{mood}\n\n'
 
-
-async def main():
-    try:
-        await dp.start_polling(bot)
-    finally:
-        await dp.stop_polling()
+    open('report.md', 'w').write(report)
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    asyncio.run(fetch_and_process_instagram_posts())
